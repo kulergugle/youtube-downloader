@@ -5,15 +5,15 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v3
     
     - name: Setup Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v4
       with:
         python-version: '3.9'
     
-    - name: Setup Java 17
-      uses: actions/setup-java@v4
+    - name: Setup Java
+      uses: actions/setup-java@v3
       with:
         distribution: 'temurin'
         java-version: '17'
@@ -24,31 +24,16 @@ jobs:
         sudo apt install -y python3-pip git zip unzip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
         pip install buildozer cython
     
-    - name: Setup Android SDK
-      run: |
-        mkdir -p $HOME/.buildozer/android/platform/android-sdk
-        cd $HOME/.buildozer/android/platform/android-sdk
-        wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-        unzip commandlinetools-linux-11076708_latest.zip
-        mv cmdline-tools tools
-        mkdir -p cmdline-tools
-        mv tools cmdline-tools/latest
-        # Создаём симлинк для buildozer
-        ln -s cmdline-tools/latest tools
-        yes | cmdline-tools/latest/bin/sdkmanager --licenses
-        cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.0"
-        # Устанавливаем переменные окружения
-        echo "ANDROIDSDK=$HOME/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
-        echo "ANDROIDNDK=$HOME/.buildozer/android/platform/android-ndk-r25b" >> $GITHUB_ENV
-        echo "ANDROIDAPI=33" >> $GITHUB_ENV
-        echo "ANDROIDMINAPI=21" >> $GITHUB_ENV
-    
     - name: Build APK
       run: |
+        export ANDROIDSDK="/usr/local/lib/android/sdk"
+        export ANDROIDNDK="/usr/local/lib/android/sdk/ndk/27.3.13750724"
+        export ANDROIDAPI=33
+        export ANDROIDMINAPI=21
         buildozer android debug
     
     - name: Upload APK
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v3
       with:
         name: youtube-downloader-apk
         path: bin/*.apk
