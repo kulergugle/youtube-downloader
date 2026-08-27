@@ -4,11 +4,6 @@ on: [push]
 jobs:
   build:
     runs-on: ubuntu-22.04
-    env:
-      ANDROIDSDK: /usr/local/lib/android/sdk
-      ANDROIDNDK: /usr/local/lib/android/sdk/ndk/27.3.13750724
-      ANDROIDAPI: 33
-      ANDROIDMINAPI: 21
     steps:
     - uses: actions/checkout@v4
     
@@ -30,10 +25,20 @@ jobs:
         pip install buildozer cython
     
     - name: Build APK
-      run: buildozer android debug
+      run: |
+        buildozer android debug 2>&1 | tee build.log
+        echo "=== ПОСЛЕДНИЕ 50 СТРОК ЛОГА ==="
+        tail -50 build.log
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: youtube-downloader-apk
         path: bin/*.apk
+    
+    - name: Upload build log
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-log
+        path: build.log
