@@ -4,6 +4,11 @@ on: [push]
 jobs:
   build:
     runs-on: ubuntu-22.04
+    env:
+      ANDROIDSDK: /usr/local/lib/android/sdk
+      ANDROIDNDK: /usr/local/lib/android/sdk/ndk/27.3.13750724
+      ANDROIDAPI: 33
+      ANDROIDMINAPI: 21
     steps:
     - uses: actions/checkout@v4
     
@@ -25,12 +30,7 @@ jobs:
         pip install buildozer cython
     
     - name: Build APK
-      run: |
-        export ANDROIDSDK="/usr/local/lib/android/sdk"
-        export ANDROIDNDK="/usr/local/lib/android/sdk/ndk/27.3.13750724"
-        export ANDROIDAPI=33
-        export ANDROIDMINAPI=21
-        buildozer android debug
+      run: buildozer android debug
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
