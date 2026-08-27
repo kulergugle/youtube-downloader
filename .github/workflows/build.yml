@@ -24,8 +24,9 @@ jobs:
         cd $HOME/.buildozer/android/platform/android-sdk
         wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
         unzip commandlinetools-linux-11076708_latest.zip
-        mkdir -p cmdline-tools
-        mv cmdline-tools cmdline-tools/latest
+        mkdir -p cmdline-tools/latest
+        cp -r cmdline-tools/* cmdline-tools/latest/
+        rm -rf cmdline-tools/bin cmdline-tools/lib cmdline-tools/source.properties cmdline-tools/NOTICE.txt
         yes | cmdline-tools/latest/bin/sdkmanager --licenses
         cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.0"
     
