@@ -33,15 +33,18 @@ jobs:
         mv cmdline-tools tools
         mkdir -p cmdline-tools
         mv tools cmdline-tools/latest
+        # Создаём симлинк для buildozer
+        ln -s cmdline-tools/latest tools
         yes | cmdline-tools/latest/bin/sdkmanager --licenses
         cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.0"
+        # Устанавливаем переменные окружения
+        echo "ANDROIDSDK=$HOME/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
+        echo "ANDROIDNDK=$HOME/.buildozer/android/platform/android-ndk-r25b" >> $GITHUB_ENV
+        echo "ANDROIDAPI=33" >> $GITHUB_ENV
+        echo "ANDROIDMINAPI=21" >> $GITHUB_ENV
     
     - name: Build APK
       run: |
-        export ANDROIDSDK="$HOME/.buildozer/android/platform/android-sdk"
-        export ANDROIDNDK="$HOME/.buildozer/android/platform/android-ndk-r25b"
-        export ANDROIDAPI=33
-        export ANDROIDMINAPI=21
         buildozer android debug
     
     - name: Upload APK
