@@ -14,7 +14,11 @@ android.minapi = 21
 android.ndk = 25b
 android.arch = arm64-v8a
 android.private_storage = True
+android.skip_update = False
+android.accept_sdk_license = True
+p4a.branch = master
+p4a.bootstrap = sdl2
 
 [buildozer]
-log_level = 2
+log_level = 1
 warn_on_root = 1
