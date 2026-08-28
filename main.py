@@ -1,321 +1,239 @@
 # -*- coding: utf-8 -*-
-"""
-YouTube Downloader for Android
-Kivy + yt-dlp
-"""
-import os
 import sys
+import os
 import threading
 import traceback
 import time
 
-# ========== ЛОГИРОВАНИЕ ==========
-LOG_FILE = ''
-try:
-    from android.storage import app_storage_path
-    LOG_DIR = app_storage_path()
-except:
-    LOG_DIR = os.path.dirname(os.path.abspath(__file__))
-    if not os.path.exists(LOG_DIR):
-        LOG_DIR = os.getcwd()
-
-LOG_FILE = os.path.join(LOG_DIR, 'app_log.txt')
-
+# Логи в stderr (видны через adb logcat или Logcat Reader)
 def log(msg):
-    try:
-        ts = time.strftime('%H:%M:%S')
-        with open(LOG_FILE, 'a', encoding='utf-8') as f:
-            f.write(f'[{ts}] {msg}\n')
-    except:
-        pass
+    ts = time.strftime('%H:%M:%S')
+    line = f'[YTDL] [{ts}] {msg}'
+    print(line, file=sys.stderr)
 
-log('\n========== APP START ==========')
+log('=== APP START ===')
 
 # ========== ANDROID ==========
 IS_ANDROID = False
 try:
     from android.permissions import request_permissions, Permission
-    from jnius import autoclass
     IS_ANDROID = True
-    log('Android detected')
+    log('Android OK')
 except Exception as e:
     log(f'Not Android: {e}')
 
 # ========== KIVY ==========
-from kivy.app import App
-from kivy.core.window import Window
-from kivy.clock import Clock
-from kivy.metrics import dp
-from kivy.graphics import Color, RoundedRectangle, Line
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.gridlayout import GridLayout
-from kivy.uix.anchorlayout import AnchorLayout
-from kivy.uix.scrollview import ScrollView
-from kivy.uix.textinput import TextInput
-from kivy.uix.button import Button
-from kivy.uix.label import Label
-from kivy.uix.progressbar import ProgressBar
-from kivy.uix.widget import Widget
-from kivy.properties import ListProperty, NumericProperty
-from kivy.animation import Animation
+try:
+    from kivy.app import App
+    from kivy.core.window import Window
+    from kivy.clock import Clock
+    from kivy.metrics import dp
+    from kivy.uix.boxlayout import BoxLayout
+    from kivy.uix.gridlayout import GridLayout
+    from kivy.uix.textinput import TextInput
+    from kivy.uix.button import Button
+    from kivy.uix.label import Label
+    from kivy.uix.progressbar import ProgressBar
+    from kivy.uix.widget import Widget
+    log('Kivy imports OK')
+except Exception as e:
+    log(f'Kivy import FAILED: {e}')
+    raise
 
-Window.clearcolor = (0.05, 0.05, 0.08, 1)
+Window.clearcolor = (0.06, 0.06, 0.1, 1)
 
 # ========== ЦВЕТА ==========
-COLORS = {
-    'bg': (0.05, 0.05, 0.08, 1),
-    'card': (0.1, 0.1, 0.15, 1),
-    'card_border': (0.2, 0.2, 0.3, 1),
-    'primary': (0.35, 0.55, 1, 1),
-    'primary_dark': (0.25, 0.4, 0.85, 1),
-    'text': (0.95, 0.95, 0.97, 1),
-    'text_secondary': (0.6, 0.6, 0.7, 1),
-    'success': (0.3, 0.85, 0.5, 1),
-    'error': (0.95, 0.35, 0.35, 1),
-    'warning': (1, 0.75, 0.3, 1),
-}
+BG = (0.06, 0.06, 0.1, 1)
+CARD = (0.12, 0.12, 0.18, 1)
+PRIMARY = (0.3, 0.55, 0.95, 1)
+PRIMARY_DARK = (0.2, 0.4, 0.8, 1)
+TEXT = (0.95, 0.95, 0.97, 1)
+TEXT_SEC = (0.55, 0.55, 0.65, 1)
+SUCCESS = (0.3, 0.8, 0.5, 1)
+ERROR = (0.9, 0.35, 0.35, 1)
+WARN = (1, 0.7, 0.3, 1)
 
-# ========== КАСТОМНЫЕ ВИДЖЕТЫ ==========
-class Card(BoxLayout):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.padding = dp(16)
-        self.spacing = dp(12)
-        self.size_hint_y = None
-        self.bind(pos=self._update_rect, size=self._update_rect)
-        with self.canvas.before:
-            Color(*COLORS['card'])
-            self.rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(16)])
-            Color(*COLORS['card_border'])
-            self.border = Line(rounded_rectangle=(self.x, self.y, self.width, self.height, dp(16)), width=dp(1.2))
+# ========== ПУТЬ СОХРАНЕНИЯ ==========
+def get_save_dir():
+    try:
+        from jnius import autoclass
+        PythonActivity = autoclass('org.kivy.android.PythonActivity')
+        ctx = PythonActivity.mActivity
+        path = ctx.getFilesDir().getAbsolutePath()
+        log(f'Save path: {path}')
+        return path
+    except Exception as e:
+        log(f'jnius failed: {e}')
+    try:
+        from android.storage import app_storage_path
+        path = app_storage_path()
+        log(f'Save path2: {path}')
+        return path
+    except Exception as e:
+        log(f'app_storage failed: {e}')
+    path = os.path.join(os.path.expanduser('~'), 'Downloads')
+    os.makedirs(path, exist_ok=True)
+    log(f'Save fallback: {path}')
+    return path
 
-    def _update_rect(self, *args):
-        self.rect.pos = self.pos
-        self.rect.size = self.size
-        self.border.rounded_rectangle = (self.x, self.y, self.width, self.height, dp(16))
+# ========== YT-DLP ==========
+try:
+    import yt_dlp
+    log('yt_dlp OK')
+except Exception as e:
+    log(f'yt_dlp FAILED: {e}')
+    yt_dlp = None
 
-class StyledButton(Button):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.background_normal = ''
-        self.background_color = COLORS['primary']
-        self.color = COLORS['text']
-        self.font_size = dp(16)
-        self.bold = True
-        self.size_hint_y = None
-        self.height = dp(52)
-
-class QualityButton(Button):
-    selected = False
-    def __init__(self, text='', **kwargs):
-        super().__init__(text=text, **kwargs)
-        self.background_normal = ''
-        self.background_color = (0.15, 0.15, 0.22, 1)
-        self.color = COLORS['text_secondary']
-        self.font_size = dp(13)
-        self.size_hint_y = None
-        self.height = dp(40)
-        self.bind(on_press=self._toggle)
-
-    def _toggle(self, *args):
-        pass
-
-# ========== ГЛАВНОЕ ПРИЛОЖЕНИЕ ==========
+# ========== ПРИЛОЖЕНИЕ ==========
 class DownloaderApp(App):
     def build(self):
         log('build()')
-        if IS_ANDROID:
-            try:
-                request_permissions([Permission.INTERNET])
-            except Exception as e:
-                log(f'Permission error: {e}')
+        self.downloading = False
+        self.selected_fmt = '18'
 
-        root = BoxLayout(orientation='vertical', padding=dp(16), spacing=dp(12))
+        root = BoxLayout(orientation='vertical', padding=dp(20), spacing=dp(14))
 
-        # === ШАПКА ===
-        header = BoxLayout(orientation='horizontal', size_hint_y=None, height=dp(50))
-        header.add_widget(Label(
-            text='[b]YouTube[/b] Downloader',
-            markup=True,
-            font_size=dp(24),
-            color=COLORS['text'],
-            halign='left',
-            valign='center'
-        ))
-        root.add_widget(header)
-
-        # === КАРТОЧКА ВВОДА ===
-        card_input = Card()
-        card_input.add_widget(Label(
-            text='Ссылка на видео',
-            font_size=dp(14),
-            color=COLORS['text_secondary'],
+        # Заголовок
+        root.add_widget(Label(
+            text='YouTube Downloader',
+            font_size=dp(26),
+            color=TEXT,
             size_hint_y=None,
-            height=dp(20),
-            halign='left'
+            height=dp(50),
+            bold=True
         ))
+        root.add_widget(Label(
+            text='Вставь ссылку и выбери качество',
+            font_size=dp(13),
+            color=TEXT_SEC,
+            size_hint_y=None,
+            height=dp(24)
+        ))
+
+        # Поле ввода
         self.url_input = TextInput(
             hint_text='https://youtube.com/watch?v=...',
             multiline=False,
             font_size=dp(15),
             size_hint_y=None,
             height=dp(50),
-            background_color=(0.06, 0.06, 0.1, 1),
-            foreground_color=COLORS['text'],
-            hint_text_color=(0.3, 0.3, 0.4, 1),
-            cursor_color=COLORS['primary'],
-            padding=[dp(12), dp(14)],
-            background_normal='',
-            background_active=''
+            background_color=(0.08, 0.08, 0.14, 1),
+            foreground_color=TEXT,
+            hint_text_color=(0.35, 0.35, 0.45, 1),
+            cursor_color=PRIMARY,
+            padding=[dp(14), dp(15)]
         )
-        card_input.add_widget(self.url_input)
-        card_input.height = dp(90)
-        root.add_widget(card_input)
+        root.add_widget(self.url_input)
 
-        # === КАРТОЧКА КАЧЕСТВА ===
-        card_quality = Card()
-        card_quality.add_widget(Label(
-            text='Качество видео',
+        # Качество
+        root.add_widget(Label(
+            text='Качество:',
             font_size=dp(14),
-            color=COLORS['text_secondary'],
+            color=TEXT_SEC,
             size_hint_y=None,
-            height=dp(20),
+            height=dp(28),
             halign='left'
         ))
-        quality_grid = GridLayout(cols=3, spacing=dp(8), size_hint_y=None, height=dp(90))
-
-        self.quality_buttons = {}
-        qualities = [
-            ('360p', '18'),
-            ('720p', '22/18'),
-            ('Аудио', 'bestaudio/best'),
-        ]
-        for label, fmt in qualities:
-            btn = QualityButton(text=label)
+        qual_grid = GridLayout(cols=3, spacing=dp(10), size_hint_y=None, height=dp(48))
+        self.qual_btns = {}
+        for label, fmt in [('360p', '18'), ('720p', '22/18'), ('Аудио', 'bestaudio/best')]:
+            btn = Button(
+                text=label,
+                font_size=dp(14),
+                background_color=(0.15, 0.15, 0.22, 1),
+                color=TEXT_SEC
+            )
             btn.fmt = fmt
-            btn.bind(on_press=self._on_quality)
-            self.quality_buttons[label] = btn
-            quality_grid.add_widget(btn)
+            btn.bind(on_press=self._on_qual)
+            self.qual_btns[label] = btn
+            qual_grid.add_widget(btn)
+        self._select_qual('360p')
+        root.add_widget(qual_grid)
 
-        # Выбираем 360p по умолчанию
-        self._select_quality('360p')
-        card_quality.add_widget(quality_grid)
-        card_quality.height = dp(130)
-        root.add_widget(card_quality)
+        # Кнопка
+        self.dl_btn = Button(
+            text='СКАЧАТЬ',
+            font_size=dp(18),
+            bold=True,
+            size_hint_y=None,
+            height=dp(54),
+            background_color=PRIMARY,
+            color=TEXT
+        )
+        self.dl_btn.bind(on_press=self.start_download)
+        root.add_widget(self.dl_btn)
 
-        # === КНОПКА СКАЧАТЬ ===
-        self.download_btn = StyledButton(text='⬇  СКАЧАТЬ')
-        self.download_btn.bind(on_press=self.start_download)
-        root.add_widget(self.download_btn)
+        # Прогресс
+        self.progress = ProgressBar(max=100, value=0, size_hint_y=None, height=dp(10))
+        root.add_widget(self.progress)
 
-        # === ПРОГРЕСС ===
-        progress_card = Card()
+        # Статус
         self.status = Label(
-            text='Готов к работе',
+            text='Готов',
             font_size=dp(14),
-            color=COLORS['text_secondary'],
+            color=TEXT_SEC,
             size_hint_y=None,
-            height=dp(24)
+            height=dp(36)
         )
-        progress_card.add_widget(self.status)
+        root.add_widget(self.status)
 
-        self.progress = ProgressBar(
-            max=100,
-            value=0,
-            size_hint_y=None,
-            height=dp(8)
-        )
-        progress_card.add_widget(self.progress)
-
-        self.log_label = Label(
-            text='',
-            font_size=dp(10),
-            color=(0.4, 0.4, 0.5, 1),
-            size_hint_y=None,
-            height=dp(30),
-            halign='center'
-        )
-        progress_card.add_widget(self.log_label)
-        progress_card.height = dp(90)
-        root.add_widget(progress_card)
-
-        # === ИНФО ===
         root.add_widget(Widget())  # spacer
-        info = Label(
-            text='Файлы сохраняются в папку приложения',
-            font_size=dp(11),
-            color=(0.35, 0.35, 0.45, 1),
-            size_hint_y=None,
-            height=dp(30)
-        )
-        root.add_widget(info)
-
-        self.downloading = False
         return root
 
-    def _on_quality(self, btn):
-        for b in self.quality_buttons.values():
+    def _on_qual(self, btn):
+        for b in self.qual_btns.values():
             b.background_color = (0.15, 0.15, 0.22, 1)
-            b.color = COLORS['text_secondary']
-            b.selected = False
-        self._select_quality(btn.text)
+            b.color = TEXT_SEC
+        self._select_qual(btn.text)
 
-    def _select_quality(self, key):
-        btn = self.quality_buttons.get(key)
+    def _select_qual(self, key):
+        btn = self.qual_btns.get(key)
         if btn:
-            btn.background_color = COLORS['primary_dark']
-            btn.color = COLORS['text']
-            btn.selected = True
-            self.selected_format = btn.fmt
-            log(f'Selected quality: {key} -> {btn.fmt}')
+            btn.background_color = PRIMARY_DARK
+            btn.color = TEXT
+            self.selected_fmt = btn.fmt
+            log(f'Quality: {key} -> {btn.fmt}')
 
     def start_download(self, instance):
         if self.downloading:
             return
         url = self.url_input.text.strip()
         if not url:
-            self._set_status('Вставь ссылку!', 'error')
+            self._set_status('Вставь ссылку!', ERROR)
+            return
+        if yt_dlp is None:
+            self._set_status('yt-dlp не загружен', ERROR)
             return
 
         self.downloading = True
-        self.download_btn.disabled = True
-        self.download_btn.background_color = COLORS['primary_dark']
-        self.download_btn.text = '⏳  ЗАГРУЗКА...'
+        self.dl_btn.disabled = True
+        self.dl_btn.background_color = PRIMARY_DARK
+        self.dl_btn.text = 'ЗАГРУЗКА...'
         self.progress.value = 0
-        self._set_status('Подключение...', 'warning')
+        self._set_status('Подключение...', WARN)
 
-        t = threading.Thread(target=self._download_thread, args=(url,), daemon=True)
+        t = threading.Thread(target=self._dl_thread, args=(url,), daemon=True)
         t.start()
 
-    def _download_thread(self, url):
+    def _dl_thread(self, url):
         try:
-            # Путь сохранения
-            save_dir = self._get_save_dir()
-            log(f'Save dir: {save_dir}')
-
-            # Проверка записи
-            test_file = os.path.join(save_dir, '.test')
-            with open(test_file, 'w') as f:
-                f.write('ok')
-            os.remove(test_file)
-            log('Directory writable')
-
+            save_dir = get_save_dir()
             outtmpl = os.path.join(save_dir, '%(title)s.%(ext)s')
-            fmt = getattr(self, 'selected_format', '18')
-            log(f'Format: {fmt}, URL: {url}')
+            log(f'Downloading: {url}')
+            log(f'Format: {self.selected_fmt}')
 
             ydl_opts = {
-                'format': fmt,
+                'format': self.selected_fmt,
                 'outtmpl': outtmpl,
                 'quiet': True,
                 'no_warnings': True,
-                'progress_hooks': [self._progress_hook],
+                'progress_hooks': [self._hook],
             }
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 filename = ydl.prepare_filename(info)
-                log(f'Downloaded: {filename}')
+                log(f'Done: {filename}')
 
             basename = os.path.basename(filename)
             Clock.schedule_once(lambda dt: self._on_success(basename), 0)
@@ -325,77 +243,41 @@ class DownloaderApp(App):
             log(f'ERROR: {err}')
             Clock.schedule_once(lambda dt: self._on_error(str(e)), 0)
 
-    def _get_save_dir(self):
-        # Способ 1: pyjnius
-        try:
-            from jnius import autoclass
-            PythonActivity = autoclass('org.kivy.android.PythonActivity')
-            ctx = PythonActivity.mActivity
-            path = ctx.getFilesDir().getAbsolutePath()
-            log(f'Path via pyjnius: {path}')
-            return path
-        except Exception as e:
-            log(f'pyjnius failed: {e}')
-
-        # Способ 2: app_storage_path
-        try:
-            from android.storage import app_storage_path
-            path = app_storage_path()
-            log(f'Path via app_storage: {path}')
-            return path
-        except Exception as e:
-            log(f'app_storage failed: {e}')
-
-        # Fallback
-        path = os.path.join(os.path.expanduser('~'), 'Downloads', 'YT')
-        os.makedirs(path, exist_ok=True)
-        log(f'Path fallback: {path}')
-        return path
-
-    def _progress_hook(self, d):
+    def _hook(self, d):
         if d['status'] == 'downloading':
             try:
-                percent_str = d.get('_percent_str', '0%')
-                percent = float(percent_str.replace('%', '').strip())
-                Clock.schedule_once(lambda dt, p=percent: self._update_progress(p), 0)
+                p = float(d.get('_percent_str', '0%').replace('%', '').strip())
+                Clock.schedule_once(lambda dt, val=p: self._update(val), 0)
             except:
                 pass
         elif d['status'] == 'finished':
-            Clock.schedule_once(lambda dt: self._update_progress(100), 0)
+            Clock.schedule_once(lambda dt: self._update(100), 0)
 
-    def _update_progress(self, percent):
-        self.progress.value = percent
-        self.status.text = f'Загрузка... {percent:.0f}%'
-        self.status.color = COLORS['warning']
+    def _update(self, val):
+        self.progress.value = val
+        self.status.text = f'Загрузка... {val:.0f}%'
+        self.status.color = WARN
 
-    def _on_success(self, filename):
+    def _on_success(self, name):
         self.downloading = False
-        self.download_btn.disabled = False
-        self.download_btn.background_color = COLORS['primary']
-        self.download_btn.text = '⬇  СКАЧАТЬ'
+        self.dl_btn.disabled = False
+        self.dl_btn.background_color = PRIMARY
+        self.dl_btn.text = 'СКАЧАТЬ'
         self.progress.value = 100
-        self._set_status(f'Сохранено: {filename}', 'success')
-        self.log_label.text = f'Папка: {LOG_FILE}'
+        self._set_status(f'Готово: {name}', SUCCESS)
 
-    def _on_error(self, error):
+    def _on_error(self, msg):
         self.downloading = False
-        self.download_btn.disabled = False
-        self.download_btn.background_color = COLORS['primary']
-        self.download_btn.text = '⬇  СКАЧАТЬ'
+        self.dl_btn.disabled = False
+        self.dl_btn.background_color = PRIMARY
+        self.dl_btn.text = 'СКАЧАТЬ'
         self.progress.value = 0
-        self._set_status(f'Ошибка: {error[:80]}', 'error')
-        self.log_label.text = f'Лог: {LOG_FILE}'
+        self._set_status(f'Ошибка: {msg[:60]}', ERROR)
 
-    def _set_status(self, text, mode='normal'):
+    def _set_status(self, text, color):
         self.status.text = text
-        if mode == 'success':
-            self.status.color = COLORS['success']
-        elif mode == 'error':
-            self.status.color = COLORS['error']
-        elif mode == 'warning':
-            self.status.color = COLORS['warning']
-        else:
-            self.status.color = COLORS['text_secondary']
+        self.status.color = color
 
 if __name__ == '__main__':
+    log('Running app...')
     DownloaderApp().run()
