@@ -1,12 +1,17 @@
 # -*- coding: utf-8 -*-
-import sys
 import os
+import sys
 import threading
 import traceback
 
-# ========== ЗАЩИЩЁННЫЙ ЗАПУСК ==========
-# Если что-то сломается на этапе импорта — покажем на экране
-STARTUP_ERROR = None
+# Отключаем аргументы Kivy — иногда вызывают краш на Android
+os.environ['KIVY_NO_ARGS'] = '1'
+os.environ['KIVY_NO_CONSOLELOG'] = '1'
+
+# ========== ИМПОРТЫ С ЗАЩИТОЙ ==========
+KIVY_OK = False
+YTDLP_OK = False
+STARTUP_ERROR = ''
 STARTUP_TRACEBACK = ''
 
 try:
@@ -16,7 +21,6 @@ try:
     from kivy.metrics import dp
     from kivy.uix.boxlayout import BoxLayout
     from kivy.uix.gridlayout import GridLayout
-    from kivy.uix.scrollview import ScrollView
     from kivy.uix.textinput import TextInput
     from kivy.uix.button import Button
     from kivy.uix.label import Label
@@ -24,29 +28,18 @@ try:
     from kivy.uix.widget import Widget
     KIVY_OK = True
 except Exception as e:
-    KIVY_OK = False
-    STARTUP_ERROR = f'KIVY IMPORT ERROR: {e}'
+    STARTUP_ERROR = 'KIVY: ' + str(e)
     STARTUP_TRACEBACK = traceback.format_exc()
 
-# Цвета
-BG = (0.06, 0.06, 0.1, 1)
-PRIMARY = (0.3, 0.55, 0.95, 1)
-PRIMARY_DARK = (0.2, 0.4, 0.8, 1)
-TEXT = (0.95, 0.95, 0.97, 1)
-TEXT_SEC = (0.55, 0.55, 0.65, 1)
-SUCCESS = (0.3, 0.8, 0.5, 1)
-ERROR = (0.9, 0.35, 0.35, 1)
-WARN = (1, 0.7, 0.3, 1)
-
-# yt-dlp
 try:
     import yt_dlp
     YTDLP_OK = True
 except Exception as e:
-    YTDLP_OK = False
     if not STARTUP_ERROR:
-        STARTUP_ERROR = f'YT-DLP IMPORT ERROR: {e}'
+        STARTUP_ERROR = 'YT-DLP: ' + str(e)
         STARTUP_TRACEBACK = traceback.format_exc()
+    else:
+        STARTUP_ERROR += ' | YT-DLP: ' + str(e)
 
 # Android
 try:
@@ -62,14 +55,15 @@ try:
 except:
     JNIUS_OK = False
 
-
+# ========== ФУНКЦИИ ==========
 def get_save_dir():
-    try:
-        PythonActivity = autoclass('org.kivy.android.PythonActivity')
-        ctx = PythonActivity.mActivity
-        return ctx.getFilesDir().getAbsolutePath()
-    except:
-        pass
+    if JNIUS_OK:
+        try:
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            ctx = PythonActivity.mActivity
+            return ctx.getFilesDir().getAbsolutePath()
+        except:
+            pass
     try:
         from android.storage import app_storage_path
         return app_storage_path()
@@ -80,13 +74,14 @@ def get_save_dir():
     return path
 
 
+# ========== ПРИЛОЖЕНИЕ ==========
 class DownloaderApp(App):
     def build(self):
-        Window.clearcolor = BG
+        # Window можно трогать только тут!
+        Window.clearcolor = (0.06, 0.06, 0.1, 1)
 
-        # Если импорты сломались — показываем ошибку и выходим
-        if not KIVY_OK or STARTUP_ERROR:
-            return self._error_screen(STARTUP_ERROR or 'Unknown startup error')
+        if not KIVY_OK:
+            return self._error_ui()
 
         self.downloading = False
         self.selected_fmt = '18'
@@ -96,13 +91,11 @@ class DownloaderApp(App):
         root.add_widget(Label(
             text='YouTube Downloader',
             font_size=dp(26),
-            color=TEXT,
+            color=(0.95, 0.95, 0.97, 1),
             size_hint_y=None,
-            height=dp(50),
-            bold=True
+            height=dp(50)
         ))
 
-        # Поле ввода
         self.url_input = TextInput(
             hint_text='https://youtube.com/watch?v=...',
             multiline=False,
@@ -110,23 +103,26 @@ class DownloaderApp(App):
             size_hint_y=None,
             height=dp(50),
             background_color=(0.08, 0.08, 0.14, 1),
-            foreground_color=TEXT,
+            foreground_color=(0.95, 0.95, 0.97, 1),
             hint_text_color=(0.35, 0.35, 0.45, 1),
-            cursor_color=PRIMARY,
             padding=[dp(14), dp(15)]
         )
         root.add_widget(self.url_input)
 
-        # Качество
         root.add_widget(Label(
-            text='Качество:', font_size=dp(14), color=TEXT_SEC,
-            size_hint_y=None, height=dp(28), halign='left'
+            text='Качество:', font_size=dp(14), color=(0.55, 0.55, 0.65, 1),
+            size_hint_y=None, height=dp(28)
         ))
+
         qual_grid = GridLayout(cols=3, spacing=dp(10), size_hint_y=None, height=dp(48))
         self.qual_btns = {}
-        for label, fmt in [('360p', '18'), ('720p', '22/18'), ('Аудио', 'bestaudio/best')]:
-            btn = Button(text=label, font_size=dp(14),
-                         background_color=(0.15, 0.15, 0.22, 1), color=TEXT_SEC)
+        colors = {
+            '360p': ('18', (0.15, 0.15, 0.22, 1), (0.55, 0.55, 0.65, 1)),
+            '720p': ('22/18', (0.15, 0.15, 0.22, 1), (0.55, 0.55, 0.65, 1)),
+            'Аудио': ('bestaudio/best', (0.15, 0.15, 0.22, 1), (0.55, 0.55, 0.65, 1)),
+        }
+        for label, (fmt, bg, fg) in colors.items():
+            btn = Button(text=label, font_size=dp(14), background_color=bg, color=fg)
             btn.fmt = fmt
             btn.bind(on_press=self._on_qual)
             self.qual_btns[label] = btn
@@ -134,73 +130,69 @@ class DownloaderApp(App):
         self._select_qual('360p')
         root.add_widget(qual_grid)
 
-        # Кнопка
         self.dl_btn = Button(
-            text='СКАЧАТЬ', font_size=dp(18), bold=True,
+            text='СКАЧАТЬ', font_size=dp(18),
             size_hint_y=None, height=dp(54),
-            background_color=PRIMARY, color=TEXT
+            background_color=(0.3, 0.55, 0.95, 1),
+            color=(0.95, 0.95, 0.97, 1)
         )
         self.dl_btn.bind(on_press=self.start_download)
         root.add_widget(self.dl_btn)
 
-        # Прогресс
         self.progress = ProgressBar(max=100, value=0, size_hint_y=None, height=dp(10))
         root.add_widget(self.progress)
 
-        # Статус
         self.status = Label(
-            text='Готов', font_size=dp(14), color=TEXT_SEC,
+            text='Готов', font_size=dp(14), color=(0.55, 0.55, 0.65, 1),
             size_hint_y=None, height=dp(36)
         )
         root.add_widget(self.status)
 
-        # Инфо о yt-dlp
         if not YTDLP_OK:
             root.add_widget(Label(
-                text='⚠ yt-dlp НЕ загружен!',
-                font_size=dp(13), color=ERROR,
+                text='yt-dlp не загружен',
+                font_size=dp(13), color=(0.9, 0.35, 0.35, 1),
                 size_hint_y=None, height=dp(30)
             ))
 
         root.add_widget(Widget())
         return root
 
-    def _error_screen(self, msg):
-        """Показывает ошибку импорта — приложение не падает молча"""
+    def _error_ui(self):
+        """Максимально простой UI для ошибки — никаких ScrollView, bold, halign"""
         box = BoxLayout(orientation='vertical', padding=dp(20), spacing=dp(10))
         box.add_widget(Label(
-            text='ОШИБКА ЗАПУСКА',
-            font_size=dp(22), color=ERROR, bold=True,
-            size_hint_y=None, height=dp(50)
+            text='ERROR',
+            font_size=dp(20),
+            color=(0.9, 0.35, 0.35, 1),
+            size_hint_y=None,
+            height=dp(40)
         ))
         box.add_widget(Label(
-            text=msg,
-            font_size=dp(14), color=TEXT,
-            size_hint_y=None, height=dp(80)
+            text=STARTUP_ERROR,
+            font_size=dp(14),
+            color=(0.95, 0.95, 0.97, 1),
+            size_hint_y=None,
+            height=dp(60)
         ))
-        # Полный traceback в ScrollView
-        scroll = ScrollView(size_hint=(1, 1))
-        tb_label = Label(
-            text=STARTUP_TRACEBACK,
-            font_size=dp(11), color=TEXT_SEC,
-            size_hint_y=None, text_size=(Window.width - dp(40), None)
-        )
-        tb_label.bind(texture_size=lambda inst, val: setattr(inst, 'height', val[1]))
-        scroll.add_widget(tb_label)
-        box.add_widget(scroll)
+        box.add_widget(Label(
+            text=STARTUP_TRACEBACK[:500],
+            font_size=dp(11),
+            color=(0.6, 0.6, 0.7, 1)
+        ))
         return box
 
     def _on_qual(self, btn):
         for b in self.qual_btns.values():
             b.background_color = (0.15, 0.15, 0.22, 1)
-            b.color = TEXT_SEC
+            b.color = (0.55, 0.55, 0.65, 1)
         self._select_qual(btn.text)
 
     def _select_qual(self, key):
         btn = self.qual_btns.get(key)
         if btn:
-            btn.background_color = PRIMARY_DARK
-            btn.color = TEXT
+            btn.background_color = (0.2, 0.4, 0.8, 1)
+            btn.color = (0.95, 0.95, 0.97, 1)
             self.selected_fmt = btn.fmt
 
     def start_download(self, instance):
@@ -208,18 +200,18 @@ class DownloaderApp(App):
             return
         url = self.url_input.text.strip()
         if not url:
-            self._set_status('Вставь ссылку!', ERROR)
+            self._set_status('Вставь ссылку!', (0.9, 0.35, 0.35, 1))
             return
         if not YTDLP_OK:
-            self._set_status('yt-dlp не загружен!', ERROR)
+            self._set_status('yt-dlp не загружен!', (0.9, 0.35, 0.35, 1))
             return
 
         self.downloading = True
         self.dl_btn.disabled = True
-        self.dl_btn.background_color = PRIMARY_DARK
+        self.dl_btn.background_color = (0.2, 0.4, 0.8, 1)
         self.dl_btn.text = 'ЗАГРУЗКА...'
         self.progress.value = 0
-        self._set_status('Подключение...', WARN)
+        self._set_status('Подключение...', (1, 0.7, 0.3, 1))
 
         t = threading.Thread(target=self._dl_thread, args=(url,), daemon=True)
         t.start()
@@ -246,7 +238,8 @@ class DownloaderApp(App):
 
         except Exception as e:
             err = traceback.format_exc()
-            Clock.schedule_once(lambda dt: self._on_error(f'{str(e)}\n\n{err}'), 0)
+            first = str(e).split('\n')[0]
+            Clock.schedule_once(lambda dt: self._on_error(first + ' | ' + err[:100]), 0)
 
     def _hook(self, d):
         if d['status'] == 'downloading':
@@ -261,25 +254,23 @@ class DownloaderApp(App):
     def _update(self, val):
         self.progress.value = val
         self.status.text = f'Загрузка... {val:.0f}%'
-        self.status.color = WARN
+        self.status.color = (1, 0.7, 0.3, 1)
 
     def _on_success(self, name):
         self.downloading = False
         self.dl_btn.disabled = False
-        self.dl_btn.background_color = PRIMARY
+        self.dl_btn.background_color = (0.3, 0.55, 0.95, 1)
         self.dl_btn.text = 'СКАЧАТЬ'
         self.progress.value = 100
-        self._set_status(f'Готово: {name}', SUCCESS)
+        self._set_status(f'Готово: {name}', (0.3, 0.8, 0.5, 1))
 
     def _on_error(self, msg):
         self.downloading = False
         self.dl_btn.disabled = False
-        self.dl_btn.background_color = PRIMARY
+        self.dl_btn.background_color = (0.3, 0.55, 0.95, 1)
         self.dl_btn.text = 'СКАЧАТЬ'
         self.progress.value = 0
-        # Показываем первую строку ошибки
-        first_line = msg.split('\n')[0]
-        self._set_status(f'Ошибка: {first_line[:80]}', ERROR)
+        self._set_status(f'Ошибка: {msg[:100]}', (0.9, 0.35, 0.35, 1))
 
     def _set_status(self, text, color):
         self.status.text = text
